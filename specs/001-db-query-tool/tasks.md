@@ -2,13 +2,13 @@
 
 **输入**: 来自 `specs/001-db-query-tool/` 的设计文档
 **前提**: plan.md（必需）、spec.md（必需，含用户故事）、data-model.md、contracts/api.md、research.md
-**任务总数**: 29
+**任务总数**: 35
 **MVP 范围**: Phase 1（T001–T016），可独立交付：用户能添加数据库连接并浏览表/视图
 
 ## 格式: `[ID] [P?] [Story?] Description`
 
 - **[P]**: 可并行执行（不同文件，无依赖）
-- **[Story]**: 所属用户故事（US1/US2/US3/US4），仅用户故事阶段必填
+- **[Story]**: 所属用户故事（US1/US2/US3/US4/US5），仅用户故事阶段必填
 
 ---
 
@@ -92,6 +92,23 @@
 
 ---
 
+## Phase 4: 数据导出（US5）
+
+**目标**: 查询结果一键导出为 CSV 或 JSON，支持前端下载和 CLI 自动化。
+
+**独立测试**: 执行查询后点击"导出 CSV" → 浏览器下载含列名表头的 CSV 文件；执行查询后点击"导出 JSON" → 浏览器下载 JSON 数组文件；CLI 模式 `curl ?export=csv` 直接输出文件。
+
+- [x] T030 [US5] 创建导出服务 `backend/services/export_service.py`：实现 `generate_csv(columns, rows, include_bom=True) → str` 和 `generate_json(columns, rows) → str` 方法；CSV 使用标准库 csv 遵循 RFC 4180（含 UTF-8 BOM），JSON 使用标准库 json 输出标准数组格式；处理特殊字符（逗号、换行符、引号转义）和二进制/大文本字段截断
+- [x] T031 [US5] 扩展 `POST /api/v1/dbs/{db_name}/query` 端点 `backend/routes/query.py`：添加 `export`（csv|json）和可选的 `output_path` 查询参数；当 `export` 指定时，执行查询后调用 export_service 生成文件内容，通过 StreamingResponse 返回文件流；`output_path` 存在时额外写入服务器文件系统
+- [x] T032 [P] [US5] 创建 ExportButton 组件 `frontend/src/components/ExportButton.vue`：Element UI 下拉菜单（CSV / JSON 选项），点击后调用 query API 带 `?export=csv` 或 `?export=json` 参数；使用 `Blob` + `URL.createObjectURL` 触发浏览器下载；默认文件名为 `{db_name}_{timestamp}.{ext}`
+- [x] T033 [US5] 集成导出功能到 QueryPage `frontend/src/views/QueryPage.vue`：在 ResultTable 上方添加 ExportButton 组件；从当前查询状态传递 `sql` 和 `dbName` 给导出组件；查询完成后自动在结果区域展示导出入口
+- [x] T034 [US5] 实现 AI 主动导出提示 `frontend/src/views/QueryPage.vue`：自然语言/SQL 查询结果返回后，AI 助手区域附加消息"需要将这次查询结果导出为 CSV 或 JSON 文件吗？"，提供快捷导出按钮（一键跳转到导出操作）
+- [x] T035 [US5] 异常处理：导出空结果集时生成仅含表头的空 CSV 或空数组 JSON；`export` 参数值非 csv/json 时返回 400 + `INVALID_EXPORT_FORMAT`；`output_path` 目录不可写时返回 400 + `EXPORT_PATH_ERROR`
+
+**Phase 4 检查点**: 前端导出按钮可用 → CSV 下载含正确表头和数据 → JSON 下载为标准数组 → CLI 参数导出工作 → AI 主动提示导出 → 异常处理覆盖 ✅
+
+---
+
 ## 依赖图
 
 ```
@@ -101,6 +118,9 @@ Phase 1: T001,T002 → T003,T004,T005,T006 → T007,T008 → T009,T010,T011 → 
 Phase 2: Phase 1 完成 → T017 → T018,T019(并行) → T020 → T021 → T022
 
 Phase 3: Phase 2 完成 → T023 → T024 → T025 → T026 → T027,T028(并行) → T029
+
+Phase 4: Phase 2 完成（需 query 端点就绪）→ T030 → T031 → T032,T034(并行) → T033 → T035
+                                 (export_service)(扩展 query 端点) (前端组件并行)  (组装)(异常)
 ```
 
 ## 并行执行示例
@@ -117,12 +137,16 @@ Phase 3: Phase 2 完成 → T023 → T024 → T025 → T026 → T027,T028(并行
 **Phase 3 内并行**:
 - T027（后端错误处理）和 T028（前端加载/空状态）可并行
 
+**Phase 4 内并行**:
+- T032（ExportButton.vue）和 T034（AI 导出提示）可并行开发
+
 ## 每个用户故事的独立测试标准
 
 - **US1 (Phase 1)**: 启动后端 → `POST /api/v1/dbs/testdb` 添加连接 → `GET /api/v1/dbs` 看到连接 → `GET /api/v1/dbs/testdb` 返回表/视图列表。前端展示树形结构。
 - **US2 (Phase 2)**: 在已连接数据库上 `POST /api/v1/dbs/testdb/query {"sql": "SELECT 1"}` → 返回结果。前端 SqlEditor 输入查询 → 表格展示。
 - **US4 (Phase 2)**: 关闭页面 → 重新打开 → metadata 从缓存加载（不重新连接）。点击刷新 → 更新为最新数据。
 - **US3 (Phase 3)**: `POST /api/v1/dbs/testdb/query/natural {"natural": "查询所有表"}` → LLM 生成 SQL → 执行 → 返回结果。输入模糊描述 → 合理提示或生成。
+- **US5 (Phase 4)**: 前端执行查询 → 点击"导出 CSV" → 浏览器下载含列名和数据的 CSV 文件。CLI: `curl -X POST "http://.../query?export=json" -d '{"sql":"SELECT 1 AS col"}'` → 输出 JSON 数组。AI 模式：查询后展示导出提示 → 点击快捷按钮触发导出。
 
 ## MVP 范围
 

@@ -2,6 +2,7 @@ import json
 from datetime import datetime
 from typing import Optional
 
+from enum import Enum
 from pydantic import BaseModel, Field
 
 
@@ -60,6 +61,21 @@ class QueryResultResponse(BaseSchema):
     row_count: int
     truncated: bool
     sql_executed: str
+
+
+class ExportFormat(str, Enum):
+    """导出文件格式枚举"""
+    CSV = "csv"
+    JSON = "json"
+
+
+class ExportResult(BaseSchema):
+    """导出结果（内存对象，不持久化）"""
+    file_name: str
+    content_type: str
+    content: str
+    format: ExportFormat
+    truncated: bool
 
 
 def parse_columns_json(raw: str) -> list[ColumnInfo]:

@@ -25,7 +25,6 @@ async def list_databases():
         rows = await cursor.fetchall()
         results = []
         for row in rows:
-            # count tables for each connection
             count_cursor = await db.execute(
                 "SELECT COUNT(*) as cnt FROM table_metadata WHERE db_name = ?",
                 (row["db_name"],),
@@ -51,6 +50,7 @@ async def create_database(db_name: str, body: DbCreateRequest):
         raise HTTPException(status_code=400, detail={
             "code": "INVALID_JDBC_URL",
             "message": "JDBC URL 必须以 jdbc:postgresql:// 开头",
+            "location": "body.db_url",
         })
 
     # Connect to PostgreSQL and fetch metadata
@@ -60,6 +60,7 @@ async def create_database(db_name: str, body: DbCreateRequest):
         raise HTTPException(status_code=400, detail={
             "code": "CONNECTION_FAILED",
             "message": f"数据库连接失败: {e}",
+            "location": "body.db_url",
         })
 
     db = await get_db()
@@ -74,6 +75,7 @@ async def create_database(db_name: str, body: DbCreateRequest):
             raise HTTPException(status_code=409, detail={
                 "code": "DB_NAME_EXISTS",
                 "message": f"连接 '{db_name}' 已存在",
+                "location": "path.db_name",
             })
 
         # Insert table_metadata
@@ -119,6 +121,7 @@ async def get_database_metadata(
             raise HTTPException(status_code=404, detail={
                 "code": "DB_NOT_FOUND",
                 "message": f"连接 '{db_name}' 不存在",
+                "location": "path.db_name",
             })
 
         # If refresh requested, re-fetch from database and update cache
@@ -144,6 +147,7 @@ async def get_database_metadata(
                     raise HTTPException(status_code=400, detail={
                         "code": "REFRESH_FAILED",
                         "message": f"刷新失败: {e}。无缓存数据可用",
+                        "location": "query.refresh",
                     })
 
                 # Build result from stale cache
@@ -231,6 +235,7 @@ async def delete_database(db_name: str):
             raise HTTPException(status_code=404, detail={
                 "code": "DB_NOT_FOUND",
                 "message": f"连接 '{db_name}' 不存在",
+                "location": "path.db_name",
             })
 
         # Delete metadata first, then connection

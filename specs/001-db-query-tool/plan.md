@@ -8,7 +8,7 @@
 
 ## 摘要
 
-构建一个内网数据库查询工具。用户通过 JDBC URL 添加 PostgreSQL 数据库连接，系统自动获取 metadata（表名、视图名、列名及数据类型），缓存到本地 SQLite 数据库。用户可在 Monaco Editor 编辑器中手写 SQL 查询，也可通过自然语言描述生成 SQL。所有 SQL 均经过 sqlglot 解析验证——仅允许 SELECT 语句，无 LIMIT 的查询自动追加 `LIMIT 1000`。查询结果以 JSON 格式（camelCase）返回，前端以表格形式渲染展示。
+构建一个内网数据库查询工具。用户通过 JDBC URL 添加 PostgreSQL 数据库连接，系统自动获取 metadata（表名、视图名、列名及数据类型），缓存到本地 SQLite 数据库。用户可在 Monaco Editor 编辑器中手写 SQL 查询，也可通过自然语言描述生成 SQL。所有 SQL 均经过 sqlglot 解析验证——仅允许 SELECT 语句，无 LIMIT 的查询自动追加 `LIMIT 1000`。查询结果以 JSON 格式（camelCase）返回，前端以表格形式渲染展示。支持将查询结果一键导出为 CSV 或 JSON 文件，提供 CLI 参数化自动导出能力。
 
 ## 技术上下文
 
@@ -69,6 +69,7 @@ backend/
 ├── services/
 │   ├── pg_service.py    # PostgreSQL 操作：JDBC URL 解析→异步连接，metadata 获取，查询执行
 │   ├── sql_validator.py # sqlglot 验证：仅允许 SELECT，LIMIT 检测/追加
+│   ├── export_service.py # 数据导出：CSV（标准库 csv，RFC 4180，UTF-8 BOM），JSON（标准库 json）
 │   └── llm_service.py   # httpx：OpenAI 兼容 Chat Completions API 调用
 └── tests/
     ├── test_sql_validator.py
@@ -81,7 +82,8 @@ frontend/
 │   │   ├── DbList.vue            # 左侧数据库连接列表 + 添加功能
 │   │   ├── TableTree.vue         # 表/视图树形展示组件
 │   │   ├── SqlEditor.vue         # Monaco Editor 封装组件
-│   │   └── ResultTable.vue       # 查询结果表格组件
+│   │   ├── ResultTable.vue       # 查询结果表格组件
+│   │   └── ExportButton.vue      # 导出按钮组件（CSV/JSON 格式选择 + 下载触发）
 │   ├── views/
 │   │   └── QueryPage.vue         # 主查询页面（组合所有组件）
 │   ├── services/
@@ -112,7 +114,7 @@ data/                               # 运行时自动创建
 | `GET` | `/api/v1/dbs` | 获取所有已连接的数据库列表 |
 | `POST` | `/api/v1/dbs/{db_name}` | 添加数据库连接（JDBC URL），自动获取并缓存 metadata |
 | `GET` | `/api/v1/dbs/{db_name}` | 获取指定连接的 metadata（表名、视图名、列信息） |
-| `POST` | `/api/v1/dbs/{db_name}/query` | 执行 SQL 查询（仅 SELECT，自动追加 LIMIT 1000） |
+| `POST` | `/api/v1/dbs/{db_name}/query` | 执行 SQL 查询（仅 SELECT，自动追加 LIMIT 1000）；支持 `?export=csv\|json&output_path=<path>` 直接导出文件 |
 | `POST` | `/api/v1/dbs/{db_name}/query/natural` | 自然语言生成 SQL 并执行 |
 
 **关键设计决策**:
@@ -120,6 +122,7 @@ data/                               # 运行时自动创建
 - 连接字符串使用 JDBC URL 格式（`jdbc:postgresql://...`），后端负责转换为异步驱动可用参数
 - SQL 验证在查询执行前完成，语法错误立即返回，不产生无效数据库请求
 - CORS 中间件允许所有 origin，适配前后端分离部署和内网使用场景
+- 数据导出通过 `?export=csv|json` 查询参数复用在 `/query` 端点，避免新增路由
 
 ## 执行阶段
 
@@ -164,7 +167,16 @@ LLM 集成，自然语言到 SQL 的生成与执行管道。
 - `POST /api/v1/dbs/{db_name}/query/natural` — 接收自然语言 → 注入 metadata 上下文 → 调用 LLM → 生成 SQL → 验证 → 执行 → 返回结果
 - 前端：自然语言输入框（可切换 SQL 编辑器 / 自然语言模式）
 
-### Phase 7: 打磨与横切关注点（Polish）
+### Phase 7: 用户故事 5 — 数据导出 (P2)
+将查询结果一键导出为 CSV 或 JSON 文件，支持前端一键导出和 CLI 自动化导出。
+
+- `POST /api/v1/dbs/{db_name}/query`（扩展 `?export=csv|json` 查询参数）— 执行查询后直接返回文件流，而非 JSON body
+- `POST /api/v1/dbs/{db_name}/query?export=csv&output_path=<path>` — CLI 模式下保存到服务器指定路径
+- 后端：export_service.py（CSV: 标准库 csv + UTF-8 BOM；JSON: 标准库 json）
+- 前端：ExportButton 组件（下拉菜单选择 CSV/JSON 格式 → 触发带 export 参数的请求 → 浏览器下载）
+- AI 交互：查询结果展示后，主动提示"需要将这次查询结果导出为 CSV 或 JSON 文件吗？"
+
+### Phase 8: 打磨与横切关注点（Polish）
 错误处理完善、加载状态、边界情况处理、最终验证。
 
 - 统一的错误响应格式

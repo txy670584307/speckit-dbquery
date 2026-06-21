@@ -10,7 +10,11 @@
 
       <!-- Token 列表 -->
       <div class="token-list">
-        <div v-if="dbs.length === 0" class="empty-state" style="padding: 32px 12px;">
+        <div v-if="loadingDbs" class="empty-state" style="padding: 32px 12px;">
+          <i class="el-icon-loading"></i>
+          <div class="empty-text" style="font-size: 13px; margin-top: 8px;">加载中...</div>
+        </div>
+        <div v-else-if="dbs.length === 0" class="empty-state" style="padding: 32px 12px;">
           <div class="empty-icon" style="font-size: 24px;">📦</div>
           <div class="empty-text" style="font-size: 13px;">暂无连接</div>
         </div>
@@ -154,6 +158,16 @@
               <SqlEditor v-model="currentSql" :executing="executing" @execute="handleQuery" />
             </div>
             <div class="result-pane">
+              <div class="result-toolbar" v-if="queryResult">
+                <ExportButton
+                  :db-name="activeDb"
+                  :sql="currentSql"
+                  :has-result="!!queryResult"
+                  :show-prompt="showExportPrompt && queryMode === 'sql'"
+                  @exported="onExported"
+                  @dismiss-prompt="dismissExportPrompt"
+                />
+              </div>
               <ResultTable :result="queryResult" />
             </div>
           </div>
@@ -178,6 +192,16 @@
               </div>
             </transition>
             <div class="result-pane" :style="{ marginTop: '12px' }">
+              <div class="result-toolbar" v-if="queryResult">
+                <ExportButton
+                  :db-name="activeDb"
+                  :sql="generatedSql || ''"
+                  :has-result="!!queryResult"
+                  :show-prompt="showExportPrompt && queryMode === 'nl'"
+                  @exported="onExported"
+                  @dismiss-prompt="dismissExportPrompt"
+                />
+              </div>
               <ResultTable :result="queryResult" />
             </div>
           </div>
@@ -214,16 +238,18 @@
 </template>
 
 <script>
-import { getDbs, addDb, getDbMetadata, queryDb, naturalQuery } from '../services/api';
+import { getDbs, addDb, getDbMetadata, queryDb, naturalQuery, extractErrorMessage } from '../services/api';
 import SqlEditor from '../components/SqlEditor.vue';
 import ResultTable from '../components/ResultTable.vue';
+import ExportButton from '../components/ExportButton.vue';
 
 export default {
   name: 'QueryPage',
-  components: { SqlEditor, ResultTable },
+  components: { SqlEditor, ResultTable, ExportButton },
   data() {
     return {
       dbs: [],
+      loadingDbs: false,
       activeDb: '',
       metadata: [],
       loadingMetadata: false,
@@ -248,6 +274,7 @@ export default {
       generatedSql: '',
       executing: false,
       queryResult: null,
+      showExportPrompt: false,
       showDeleteDialog: false,
       deleteTarget: '',
       deleting: false,
@@ -264,6 +291,7 @@ export default {
   },
   methods: {
     async loadDbs() {
+      this.loadingDbs = true;
       try {
         this.dbs = await getDbs();
         if (this.dbs.length > 0) {
@@ -279,7 +307,10 @@ export default {
           this.queryResult = null;
         }
       } catch (e) {
-        this.$message.error('加载连接列表失败: ' + (e.response?.data?.detail?.message || e.message));
+        const err = extractErrorMessage(e);
+        this.$message.error('加载连接列表失败: ' + err.message);
+      } finally {
+        this.loadingDbs = false;
       }
     },
     async loadMetadata() {
@@ -289,7 +320,8 @@ export default {
       try {
         this.metadata = await getDbMetadata(this.activeDb);
       } catch (e) {
-        this.$message.error('加载 metadata 失败: ' + (e.response?.data?.detail?.message || e.message));
+        const err = extractErrorMessage(e);
+        this.$message.error('加载 metadata 失败: ' + err.message);
       } finally {
         this.loadingMetadata = false;
       }
@@ -299,6 +331,7 @@ export default {
       this.activeDb = dbName;
       this.queryResult = null;
       this.generatedSql = '';
+      this.showExportPrompt = false;
       this.currentSql = 'SELECT * FROM ';
       this.loadMetadata();
     },
@@ -311,7 +344,8 @@ export default {
         this.$message.success('metadata 已更新');
       } catch (e) {
         this.metadata = old;
-        this.$message.error(e.response?.data?.detail?.message || '刷新失败，保留缓存');
+        const err = extractErrorMessage(e);
+        this.$message.error(err.message + '（保留缓存）');
       } finally {
         this.refreshingMetadata = false;
       }
@@ -360,7 +394,8 @@ export default {
         this.activeDb = result.dbName;
         this.loadMetadata();
       } catch (e) {
-        this.$message.error(e.response?.data?.detail?.message || '添加连接失败');
+        const err = extractErrorMessage(e);
+        this.$message.error(err.message || '添加连接失败');
       } finally {
         this.adding = false;
       }
@@ -375,8 +410,10 @@ export default {
       this.queryResult = null;
       try {
         this.queryResult = await queryDb(this.activeDb, this.currentSql);
+        this.showExportPrompt = true;
       } catch (e) {
-        this.$message.error(e.response?.data?.detail?.message || '查询执行失败');
+        const err = extractErrorMessage(e);
+        this.$message.error(err.message || '查询执行失败');
       } finally {
         this.executing = false;
       }
@@ -389,16 +426,24 @@ export default {
       try {
         this.queryResult = await naturalQuery(this.activeDb, this.naturalText);
         if (this.queryResult?.sqlExecuted) this.generatedSql = this.queryResult.sqlExecuted;
+        this.showExportPrompt = true;
       } catch (e) {
         const d = e.response?.data?.detail;
         if (d?.generatedSql) this.generatedSql = d.generatedSql;
-        this.$message.error(d?.message || '自然语言查询失败');
+        const err = extractErrorMessage(e);
+        this.$message.error(err.message || '自然语言查询失败');
       } finally {
         this.executing = false;
       }
     },
     onGeneratedSqlEdit(v) { this.generatedSql = v; },
     switchToSqlMode(sql) { this.queryMode = 'sql'; this.currentSql = sql; this.$message.success('已切换到 SQL 编辑模式'); },
+    onExported() {
+      this.showExportPrompt = false;
+    },
+    dismissExportPrompt() {
+      this.showExportPrompt = false;
+    },
     async executeGeneratedSql() {
       if (!this.generatedSql.trim()) return;
       this.executing = true;
@@ -406,7 +451,8 @@ export default {
       try {
         this.queryResult = await queryDb(this.activeDb, this.generatedSql);
       } catch (e) {
-        this.$message.error(e.response?.data?.detail?.message || '查询执行失败');
+        const err = extractErrorMessage(e);
+        this.$message.error(err.message || '查询执行失败');
       } finally {
         this.executing = false;
       }
@@ -657,6 +703,14 @@ export default {
   border-top: 1px solid #e5e6eb;
   overflow: auto;
   min-height: 120px;
+}
+.result-toolbar {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-bottom: 1px solid #e5e6eb;
+  background: #fafafa;
+  gap: 8px;
 }
 .query-panel-nl {
   flex: 1;

@@ -4,6 +4,16 @@ from typing import Any
 
 from backend.models import ColumnInfo, QueryResultResponse
 
+try:
+    import asyncpg
+except ImportError:
+    asyncpg = None
+
+try:
+    import psycopg
+except ImportError:
+    psycopg = None
+
 CONNECTION_TIMEOUT_SECONDS = 10.0
 
 
@@ -40,39 +50,46 @@ async def connect_and_fetch_metadata(db_url: str) -> tuple[list[dict[str, Any]],
     """
     jdbc = parse_jdbc_url(db_url)
 
-    try:
-        import asyncpg
-        conn = await asyncio.wait_for(
-            asyncpg.connect(
-                host=jdbc.host,
-                port=jdbc.port,
-                database=jdbc.database,
-                user=jdbc.user,
-                password=jdbc.password,
-            ),
-            timeout=CONNECTION_TIMEOUT_SECONDS,
-        )
+    if asyncpg is not None:
+        try:
+            conn = await asyncio.wait_for(
+                asyncpg.connect(
+                    host=jdbc.host,
+                    port=jdbc.port,
+                    database=jdbc.database,
+                    user=jdbc.user,
+                    password=jdbc.password,
+                ),
+                timeout=CONNECTION_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            raise TimeoutError(
+                f"连接 PostgreSQL 超时（{CONNECTION_TIMEOUT_SECONDS}s），请检查网络或数据库地址"
+            )
         try:
             return await _query_metadata_asyncpg(conn, jdbc)
         finally:
             await conn.close()
-    except ImportError:
-        # fallback to psycopg
-        import psycopg
+
+    elif psycopg is not None:
         conn_info = (
             f"host={jdbc.host} port={jdbc.port} "
             f"dbname={jdbc.database} user={jdbc.user} password={jdbc.password}"
         )
-        conn = await asyncio.wait_for(
-            psycopg.AsyncConnection.connect(conn_info),
-            timeout=CONNECTION_TIMEOUT_SECONDS,
-        )
+        try:
+            conn = await asyncio.wait_for(
+                psycopg.AsyncConnection.connect(conn_info),
+                timeout=CONNECTION_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            raise TimeoutError(
+                f"连接 PostgreSQL 超时（{CONNECTION_TIMEOUT_SECONDS}s），请检查网络或数据库地址"
+            )
         async with conn:
             return await _query_metadata(conn, jdbc)
-    except asyncio.TimeoutError:
-        raise TimeoutError(
-            f"连接 PostgreSQL 超时（{CONNECTION_TIMEOUT_SECONDS}s），请检查网络或数据库地址"
-        )
+
+    else:
+        raise ImportError("未安装任何 PostgreSQL 异步驱动（需要 asyncpg 或 psycopg）")
 
 
 async def _query_metadata(conn, jdbc: JdbcUrl) -> tuple[list[dict[str, Any]], JdbcUrl]:
@@ -159,8 +176,16 @@ async def execute_query(db_url: str, sql: str) -> QueryResultResponse:
     """Execute a SELECT query against PostgreSQL via JDBC URL."""
     jdbc = parse_jdbc_url(db_url)
 
-    import asyncpg
+    if asyncpg is not None:
+        return await _execute_query_asyncpg(jdbc, sql)
+    elif psycopg is not None:
+        return await _execute_query_psycopg(jdbc, sql)
+    else:
+        raise ImportError("未安装任何 PostgreSQL 异步驱动（需要 asyncpg 或 psycopg）")
 
+
+async def _execute_query_asyncpg(jdbc: JdbcUrl, sql: str) -> QueryResultResponse:
+    """Execute query using asyncpg."""
     conn = await asyncio.wait_for(
         asyncpg.connect(
             host=jdbc.host,
@@ -175,7 +200,6 @@ async def execute_query(db_url: str, sql: str) -> QueryResultResponse:
         truncated = "LIMIT" in sql.upper()
         result = await conn.fetch(sql)
 
-        # Get column info from result
         if result:
             columns = [
                 ColumnInfo(name=k, data_type=str(type(v).__name__), nullable=True)
@@ -193,6 +217,51 @@ async def execute_query(db_url: str, sql: str) -> QueryResultResponse:
             truncated=truncated,
             sql_executed=sql,
         )
+    except asyncio.TimeoutError:
+        raise TimeoutError(
+            f"查询执行超时（{CONNECTION_TIMEOUT_SECONDS}s）"
+        )
+    finally:
+        await conn.close()
+
+
+async def _execute_query_psycopg(jdbc: JdbcUrl, sql: str) -> QueryResultResponse:
+    """Execute query using psycopg (async)."""
+    conn_info = (
+        f"host={jdbc.host} port={jdbc.port} "
+        f"dbname={jdbc.database} user={jdbc.user} password={jdbc.password}"
+    )
+    conn = await asyncio.wait_for(
+        psycopg.AsyncConnection.connect(conn_info),
+        timeout=CONNECTION_TIMEOUT_SECONDS,
+    )
+    try:
+        truncated = "LIMIT" in sql.upper()
+        async with conn.cursor() as cur:
+            await cur.execute(sql)
+            rows_raw = await cur.fetchall()
+
+            if rows_raw:
+                columns = [
+                    ColumnInfo(
+                        name=cur.description[i].name,
+                        data_type=cur.description[i].type_object.display if cur.description[i].type_object else "unknown",
+                        nullable=True,
+                    )
+                    for i in range(len(cur.description))
+                ]
+            else:
+                columns = [ColumnInfo(name="?", data_type="unknown", nullable=True)]
+
+            rows = [list(r) for r in rows_raw]
+
+            return QueryResultResponse(
+                columns=columns,
+                rows=rows,
+                row_count=len(rows_raw),
+                truncated=truncated,
+                sql_executed=sql,
+            )
     except asyncio.TimeoutError:
         raise TimeoutError(
             f"查询执行超时（{CONNECTION_TIMEOUT_SECONDS}s）"

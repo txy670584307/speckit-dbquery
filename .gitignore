@@ -25,3 +25,6 @@ frontend/node_modules/
 
 # Reasonix
 .reasonix/
+
+# Generated cache
+.codegraph/

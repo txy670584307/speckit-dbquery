@@ -115,6 +115,36 @@ class QueryResultResponse(BaseModel):
     sql_executed: str
 ```
 
+### ExportFormat（枚举，非持久化）
+
+表示导出文件的目标格式。
+
+| Value | Description |
+|-------|-------------|
+| `CSV` | RFC 4180 逗号分隔值文件，UTF-8 BOM |
+| `JSON` | 标准 JSON 数组文件，UTF-8 |
+
+在 API 查询参数和前端导出下拉菜单中使用。后端通过 `ExportFormat` 枚举选择序列化策略。
+
+```python
+from enum import Enum
+
+class ExportFormat(str, Enum):
+    CSV = "csv"
+    JSON = "json"
+```
+
+### ExportResult（内存对象，不持久化）
+
+```python
+class ExportResult(BaseModel):
+    file_name: str          # 文件名（含扩展名）
+    content_type: str       # MIME type（text/csv 或 application/json）
+    content: str            # 文件内容（字符串）
+    format: ExportFormat    # 导出格式
+    truncated: bool         # 是否被 LIMIT 截断
+```
+
 ## camelCase JSON 输出
 
 后端 Pydantic model 使用 Python snake_case 字段名，通过 `model_config` 配置 `alias_generator` 实现自动转换为 camelCase：

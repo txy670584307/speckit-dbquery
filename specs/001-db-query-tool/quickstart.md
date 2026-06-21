@@ -67,6 +67,22 @@ npm run serve
 3. 系统自动获取并展示表/视图列表
 4. 在 SQL 编辑器中输入查询或输入自然语言描述
 5. 执行查询，结果以表格形式展示
+6. **导出结果**：查询结果展示后，点击结果表格上方的"导出"按钮，选择 CSV 或 JSON 格式下载文件；AI 助手也会主动询问是否需要导出
+
+### 7. CLI 一键查询并导出
+
+```bash
+# 导出为 CSV 文件
+curl -X POST "http://localhost:8000/api/v1/dbs/mydb/query?export=csv&output_path=./results.csv" \
+  -H "Content-Type: application/json" \
+  -d '{"sql": "SELECT * FROM users"}'
+
+# 导出为 JSON 文件
+curl -X POST "http://localhost:8000/api/v1/dbs/mydb/query?export=json" \
+  -H "Content-Type: application/json" \
+  -d '{"sql": "SELECT id, name FROM products"}' \
+  -o ./products.json
+```
 
 ## 项目结构
 

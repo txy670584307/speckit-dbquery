@@ -18,6 +18,7 @@ async def natural_language_query(db_name: str, body: NaturalQueryRequest):
         raise HTTPException(status_code=400, detail={
             "code": "EMPTY_INPUT",
             "message": "请输入查询描述",
+            "location": "body.natural",
         })
 
     # 1. Get metadata context from SQLite cache
@@ -31,6 +32,7 @@ async def natural_language_query(db_name: str, body: NaturalQueryRequest):
             raise HTTPException(status_code=404, detail={
                 "code": "DB_NOT_FOUND",
                 "message": f"连接 '{db_name}' 不存在",
+                "location": "path.db_name",
             })
         db_url = row["db_url"]
 
@@ -47,6 +49,7 @@ async def natural_language_query(db_name: str, body: NaturalQueryRequest):
         raise HTTPException(status_code=400, detail={
             "code": "NO_METADATA",
             "message": "该连接没有缓存 metadata，请先连接数据库",
+            "location": "path.db_name",
         })
 
     # Format metadata for LLM context
@@ -70,6 +73,7 @@ async def natural_language_query(db_name: str, body: NaturalQueryRequest):
         raise HTTPException(status_code=400, detail={
             "code": "LLM_ERROR",
             "message": f"自然语言处理失败: {e}",
+            "location": "body.natural",
         })
 
     # 3. Validate generated SQL
@@ -79,6 +83,7 @@ async def natural_language_query(db_name: str, body: NaturalQueryRequest):
         raise HTTPException(status_code=400, detail={
             "code": "INVALID_GENERATED_SQL",
             "message": f"生成的 SQL 无效: {validation.error}",
+            "location": "llm.generated_sql",
             "generatedSql": generated_sql,
         })
 
@@ -89,6 +94,7 @@ async def natural_language_query(db_name: str, body: NaturalQueryRequest):
         raise HTTPException(status_code=500, detail={
             "code": "QUERY_FAILED",
             "message": f"查询执行失败: {e}",
+            "location": "body.natural",
             "generatedSql": validation.sql,
         })
 

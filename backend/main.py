@@ -36,6 +36,7 @@ async def global_exception_handler(request: Request, exc: Exception):
             "detail": {
                 "code": "INTERNAL_ERROR",
                 "message": f"服务器内部错误: {exc}",
+                "location": "server",
             }
         },
     )
